@@ -39,4 +39,4 @@
 - [x] Refinamento visual e UX
 - [x] Validação de performance
 - [x] Documentação final
-- [ ] Checkpoint e entrega
+- [x] Checkpoint e entrega
