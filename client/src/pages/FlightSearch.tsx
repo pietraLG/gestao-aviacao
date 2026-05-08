@@ -1,34 +1,27 @@
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plane, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
-import { useSearchParams } from "@/hooks/useSearchParams";
 import { useState } from "react";
 
 export default function FlightSearch() {
   const [, setLocation] = useLocation();
-  const params = useSearchParams();
-  const [selectedFlightId, setSelectedFlightId] = useState<number | null>(null);
+  const [origin, setOrigin] = useState("");
+  const [destination, setDestination] = useState("");
 
-  const origin = params.get("origin") || "";
-  const destination = params.get("destination") || "";
-  const date = params.get("date") || "";
-
-  const { data: flights, isLoading, error } = trpc.flights.search.useQuery(
-    {
-      origin,
-      destination,
-      departureDate: new Date(date).toISOString(),
-    },
-    {
-      enabled: !!origin && !!destination && !!date,
-    }
+  const { data: flights, isLoading } = trpc.flights.search.useQuery(
+    { origin, destination },
+    { enabled: !!origin && !!destination }
   );
 
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Trigger search by setting state
+  };
+
   const handleSelectFlight = (flightId: number) => {
-    setSelectedFlightId(flightId);
-    setLocation(`/seats/${flightId}`);
+    setLocation(`/seats/${flightId}?flightId=${flightId}`);
   };
 
   const formatTime = (date: Date) => {
@@ -36,10 +29,6 @@ export default function FlightSearch() {
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
-
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleDateString("pt-PT");
   };
 
   const calculateDuration = (departure: Date, arrival: Date) => {
@@ -51,9 +40,8 @@ export default function FlightSearch() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Header */}
       <header className="bg-white shadow-sm border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
+        <div className="max-w-7xl mx-auto px-4 py-4">
           <Button
             variant="ghost"
             onClick={() => setLocation("/")}
@@ -61,104 +49,92 @@ export default function FlightSearch() {
           >
             ← Voltar
           </Button>
-          <div className="flex items-center gap-2">
-            <Plane className="w-6 h-6 text-blue-600" />
-            <h1 className="text-xl font-bold text-slate-900">SkyReserve</h1>
-          </div>
         </div>
       </header>
 
-      {/* Search Info */}
-      <section className="bg-white border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 py-6">
-          <div className="flex items-center justify-center gap-4 text-lg font-semibold text-slate-900">
-            <span>{origin}</span>
-            <ArrowRight className="w-5 h-5 text-blue-600" />
-            <span>{destination}</span>
-            <span className="text-slate-500">•</span>
-            <span className="text-slate-600">{formatDate(new Date(date))}</span>
-          </div>
-        </div>
-      </section>
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <Card className="p-6 mb-8">
+          <h1 className="text-3xl font-bold text-slate-900 mb-6">Buscar Voos</h1>
 
-      {/* Results */}
-      <section className="max-w-7xl mx-auto px-4 py-8">
-        {isLoading && (
-          <div className="flex justify-center items-center py-12">
+          <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                De (Origem)
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: LIS"
+                value={origin}
+                onChange={(e) => setOrigin(e.target.value.toUpperCase())}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Para (Destino)
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: NYC"
+                value={destination}
+                onChange={(e) => setDestination(e.target.value.toUpperCase())}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700">
+                Buscar
+              </Button>
+            </div>
+          </form>
+        </Card>
+
+        {isLoading ? (
+          <div className="flex justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
           </div>
-        )}
-
-        {error && (
-          <Card className="p-6 bg-red-50 border-red-200">
-            <p className="text-red-700">Erro ao buscar voos. Tente novamente.</p>
-          </Card>
-        )}
-
-        {flights && flights.length === 0 && !isLoading && (
-          <Card className="p-6 text-center bg-white">
-            <p className="text-slate-600">Nenhum voo disponível para esta rota.</p>
-          </Card>
-        )}
-
-        {flights && flights.length > 0 && (
+        ) : flights && flights.length > 0 ? (
           <div className="space-y-4">
             {flights.map((flight) => (
-              <Card
-                key={flight.id}
-                className="p-6 bg-white hover:shadow-lg transition-shadow cursor-pointer"
-                onClick={() => handleSelectFlight(flight.id)}
-              >
+              <Card key={flight.id} className="p-6 hover:shadow-lg transition">
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
-                  {/* Flight Number */}
                   <div>
-                    <p className="text-sm text-slate-500">Voo</p>
-                    <p className="text-lg font-bold text-slate-900">
-                      {flight.flightNumber}
-                    </p>
+                    <p className="text-xs text-slate-500">Voo</p>
+                    <p className="font-bold text-lg">{flight.flightNumber}</p>
                   </div>
 
-                  {/* Departure */}
                   <div>
-                    <p className="text-sm text-slate-500">Saída</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {formatTime(flight.departureTime)}
-                    </p>
-                    <p className="text-xs text-slate-500">{flight.origin}</p>
+                    <p className="text-xs text-slate-500">Saída</p>
+                    <p className="font-bold">{formatTime(flight.departureTime)}</p>
+                    <p className="text-sm text-slate-600">{flight.origin}</p>
                   </div>
 
-                  {/* Duration */}
-                  <div className="text-center">
-                    <p className="text-sm text-slate-500">Duração</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {calculateDuration(flight.departureTime, flight.arrivalTime)}
-                    </p>
+                  <div className="flex justify-center">
+                    <div className="text-center">
+                      <ArrowRight className="w-6 h-6 text-slate-400" />
+                      <p className="text-xs text-slate-500 mt-1">
+                        {calculateDuration(flight.departureTime, flight.arrivalTime)}
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Arrival */}
                   <div>
-                    <p className="text-sm text-slate-500">Chegada</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {formatTime(flight.arrivalTime)}
-                    </p>
-                    <p className="text-xs text-slate-500">{flight.destination}</p>
+                    <p className="text-xs text-slate-500">Chegada</p>
+                    <p className="font-bold">{formatTime(flight.arrivalTime)}</p>
+                    <p className="text-sm text-slate-600">{flight.destination}</p>
                   </div>
 
-                  {/* Price and Availability */}
                   <div className="text-right">
-                    <p className="text-sm text-slate-500">Preço</p>
-                    <p className="text-2xl font-bold text-blue-600">
-                      €{(flight.pricePerSeat / 100).toFixed(2)}
-                    </p>
-                    <p className="text-xs text-green-600 font-semibold">
-                      {flight.availableSeats} assentos disponíveis
+                    <p className="text-xs text-slate-500">Preço</p>
+                    <p className="font-bold text-xl text-blue-600">€{flight.price}</p>
+                    <p className="text-xs text-slate-500 mt-2">
+                      {flight.availableSeats} assentos
                     </p>
                     <Button
-                      className="mt-2 w-full bg-blue-600 hover:bg-blue-700"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleSelectFlight(flight.id);
-                      }}
+                      onClick={() => handleSelectFlight(flight.id)}
+                      className="mt-3 w-full bg-blue-600 hover:bg-blue-700"
                     >
                       Selecionar
                     </Button>
@@ -167,8 +143,16 @@ export default function FlightSearch() {
               </Card>
             ))}
           </div>
+        ) : origin && destination ? (
+          <Card className="p-12 text-center">
+            <p className="text-slate-600 text-lg">Nenhum voo encontrado</p>
+          </Card>
+        ) : (
+          <Card className="p-12 text-center">
+            <p className="text-slate-600 text-lg">Preencha os campos para buscar voos</p>
+          </Card>
         )}
-      </section>
+      </main>
     </div>
   );
 }

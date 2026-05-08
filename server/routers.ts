@@ -1,294 +1,204 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
 import { z } from "zod";
-import {
-  createFlight,
-  getFlightById,
-  searchFlights,
-  getAllFlights,
-  updateFlightStatus,
-  getFlightSeats,
-  createSeats,
-  updateSeatStatus,
-  getAvailableSeatsCount,
-  createBooking,
-  getUserBookings,
-  cancelBooking,
-  getBookingByCode,
-  getBookingById,
-  getFlightBookings,
-  getBookingStats,
-  createAircraft,
-  getAllAircraft,
-  getAircraftById,
-} from "./db";
+import * as db from "./db";
+import { TRPCError } from "@trpc/server";
+
+function generateBookingCode(): string {
+  return "BK" + Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+function generateSeats(rows: number = 10, cols: number = 6): string[] {
+  const seats: string[] = [];
+  for (let i = 1; i <= rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      seats.push(`${i}${String.fromCharCode(65 + j)}`);
+    }
+  }
+  return seats;
+}
 
 export const appRouter = router({
   system: systemRouter,
+  
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return {
-        success: true,
-      } as const;
+      return { success: true } as const;
     }),
   }),
 
-  // ============================================================================
-  // FLIGHTS PROCEDURES
-  // ============================================================================
+  // Flights
   flights: router({
-    // Buscar voos (público)
     search: publicProcedure
-      .input(
-        z.object({
-          origin: z.string().min(2).max(10),
-          destination: z.string().min(2).max(10),
-          departureDate: z.string().datetime(),
-        })
-      )
+      .input(z.object({
+        origin: z.string().optional(),
+        destination: z.string().optional(),
+      }))
       .query(async ({ input }) => {
-        const date = new Date(input.departureDate);
-        const results = await searchFlights(input.origin, input.destination, date);
-        
-        // Enriquecer com informações de disponibilidade
-        const enriched = await Promise.all(
-          results.map(async (flight) => {
-            const availableSeats = await getAvailableSeatsCount(flight.id);
-            return {
-              ...flight,
-              availableSeats,
-            };
-          })
-        );
-
-        return enriched;
+        const results = await db.getFlights({
+          origin: input.origin,
+          destination: input.destination,
+        });
+        return results.map(f => ({
+          id: f.id,
+          flightNumber: f.flightNumber,
+          origin: f.origin,
+          destination: f.destination,
+          departureTime: f.departureTime,
+          arrivalTime: f.arrivalTime,
+          aircraftType: f.aircraftType,
+          totalSeats: f.totalSeats,
+          availableSeats: f.availableSeats,
+          price: parseFloat(f.price as any),
+          status: f.status,
+        }));
       }),
 
-    // Obter detalhes de um voo (público)
     getById: publicProcedure
-      .input(z.object({ flightId: z.number() }))
+      .input(z.number())
       .query(async ({ input }) => {
-        const flight = await getFlightById(input.flightId);
-        if (!flight) return null;
-
-        const availableSeats = await getAvailableSeatsCount(input.flightId);
-        const seats = await getFlightSeats(input.flightId);
-
+        const flight = await db.getFlightById(input);
+        if (!flight) throw new TRPCError({ code: "NOT_FOUND" });
         return {
-          ...flight,
-          availableSeats,
-          totalSeats: seats.length,
+          id: flight.id,
+          flightNumber: flight.flightNumber,
+          origin: flight.origin,
+          destination: flight.destination,
+          departureTime: flight.departureTime,
+          arrivalTime: flight.arrivalTime,
+          aircraftType: flight.aircraftType,
+          totalSeats: flight.totalSeats,
+          availableSeats: flight.availableSeats,
+          price: parseFloat(flight.price as any),
+          status: flight.status,
         };
       }),
 
-    // Listar todos os voos (admin)
-    list: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user?.role !== "admin") {
-        throw new Error("Unauthorized");
-      }
-      return await getAllFlights();
+    list: publicProcedure.query(async () => {
+      const results = await db.getFlights();
+      return results.map(f => ({
+        id: f.id,
+        flightNumber: f.flightNumber,
+        origin: f.origin,
+        destination: f.destination,
+        departureTime: f.departureTime,
+        arrivalTime: f.arrivalTime,
+        aircraftType: f.aircraftType,
+        totalSeats: f.totalSeats,
+        availableSeats: f.availableSeats,
+        price: parseFloat(f.price as any),
+        status: f.status,
+      }));
     }),
 
-    // Criar novo voo (admin)
     create: protectedProcedure
-      .input(
-        z.object({
-          flightNumber: z.string().min(3).max(20),
-          aircraftId: z.number(),
-          origin: z.string().min(2).max(10),
-          destination: z.string().min(2).max(10),
-          departureTime: z.string().datetime(),
-          arrivalTime: z.string().datetime(),
-          pricePerSeat: z.number().positive(),
-        })
-      )
-      .mutation(async ({ input, ctx }) => {
+      .input(z.object({
+        flightNumber: z.string(),
+        origin: z.string(),
+        destination: z.string(),
+        departureTime: z.date(),
+        arrivalTime: z.date(),
+        aircraftType: z.string(),
+        totalSeats: z.number().default(180),
+        price: z.number(),
+      }))
+      .mutation(async ({ ctx, input }) => {
         if (ctx.user?.role !== "admin") {
-          throw new Error("Unauthorized");
+          throw new TRPCError({ code: "FORBIDDEN" });
         }
 
-        const aircraft_data = await getAircraftById(input.aircraftId);
-        if (!aircraft_data) {
-          throw new Error("Aircraft not found");
-        }
-
-        const result = await createFlight({
+        await db.createFlight({
           flightNumber: input.flightNumber,
-          aircraftId: input.aircraftId,
           origin: input.origin,
           destination: input.destination,
-          departureTime: new Date(input.departureTime),
-          arrivalTime: new Date(input.arrivalTime),
-          pricePerSeat: input.pricePerSeat,
-          status: "scheduled",
+          departureTime: input.departureTime,
+          arrivalTime: input.arrivalTime,
+          aircraftType: input.aircraftType,
+          totalSeats: input.totalSeats,
+          price: input.price.toString(),
         });
 
-        // Extrair ID do voo criado
-        const flightId = (result as any).insertId;
-
-        // Criar assentos para o voo
-        const config = JSON.parse(aircraft_data.seatConfiguration);
-        const seatData = [];
-
-        for (let row = 1; row <= config.rows; row++) {
-          for (let i = 0; i < config.seatsPerRow; i++) {
-            const column = config.layout[i];
-            const seatNumber = `${row}${column}`;
-
-            // Determinar classe do assento
-            let seatClass = "economy";
-            if (row <= 3) {
-              seatClass = i < 2 ? "first" : "business";
-            } else if (row <= 8) {
-              seatClass = "business";
-            }
-
-            seatData.push({
-              flightId,
-              seatNumber,
-              row,
-              column,
-              status: "available" as const,
-              seatClass: seatClass as "economy" | "business" | "first",
-            });
-          }
-        }
-
-        await createSeats(seatData);
-
-        return { flightId, message: "Flight created successfully" };
-      }),
-
-    // Atualizar status de voo (admin)
-    updateStatus: protectedProcedure
-      .input(
-        z.object({
-          flightId: z.number(),
-          status: z.enum(["scheduled", "boarding", "departed", "cancelled"]),
-        })
-      )
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user?.role !== "admin") {
-          throw new Error("Unauthorized");
-        }
-
-        await updateFlightStatus(input.flightId, input.status);
         return { success: true };
       }),
   }),
 
-  // ============================================================================
-  // SEATS PROCEDURES
-  // ============================================================================
+  // Seats
   seats: router({
-    // Obter mapa de assentos de um voo (público)
-    getFlightSeats: publicProcedure
-      .input(z.object({ flightId: z.number() }))
+    getAvailable: publicProcedure
+      .input(z.number())
       .query(async ({ input }) => {
-        const seats = await getFlightSeats(input.flightId);
-        return seats.map(seat => ({
-          id: seat.id,
-          row: seat.row,
-          column: seat.column,
-          seatNumber: seat.seatNumber,
-          status: seat.status,
-          seatClass: seat.seatClass,
-        }));
-      }),
-
-    // Obter disponibilidade de assentos (público)
-    getAvailability: publicProcedure
-      .input(z.object({ flightId: z.number() }))
-      .query(async ({ input }) => {
-        const seats = await getFlightSeats(input.flightId);
-        const available = seats.filter(s => s.status === "available").length;
-        const occupied = seats.filter(s => s.status === "occupied").length;
-        const reserved = seats.filter(s => s.status === "reserved").length;
-
+        const booked = await db.getBookedSeats(input);
+        const allSeats = generateSeats(10, 6);
+        const available = allSeats.filter(s => !booked.includes(s));
         return {
           available,
-          occupied,
-          reserved,
-          total: seats.length,
-          occupancyRate: ((occupied + reserved) / seats.length) * 100,
+          booked,
+          total: allSeats.length,
         };
       }),
   }),
 
-  // ============================================================================
-  // BOOKINGS PROCEDURES
-  // ============================================================================
+  // Bookings
   bookings: router({
-    // Criar reserva (protegido)
     create: protectedProcedure
-      .input(
-        z.object({
-          flightId: z.number(),
-          seatId: z.number(),
-          passengerName: z.string().min(2),
-          passengerEmail: z.string().email(),
-        })
-      )
-      .mutation(async ({ input, ctx }) => {
-        if (!ctx.user) throw new Error("Unauthorized");
+      .input(z.object({
+        flightId: z.number(),
+        seatNumber: z.string(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-        const flight = await getFlightById(input.flightId);
-        if (!flight) throw new Error("Flight not found");
+        const flight = await db.getFlightById(input.flightId);
+        if (!flight) throw new TRPCError({ code: "NOT_FOUND" });
 
-        // Verificar disponibilidade do assento
-        const seats = await getFlightSeats(input.flightId);
-        const seat = seats.find(s => s.id === input.seatId);
-        if (!seat || seat.status !== "available") {
-          throw new Error("Seat not available");
+        const booked = await db.getBookedSeats(input.flightId);
+        if (booked.includes(input.seatNumber)) {
+          throw new TRPCError({ code: "CONFLICT", message: "Seat already booked" });
         }
 
-        // Gerar código de reserva
-        const bookingCode = `BK${Date.now().toString().slice(-6)}`;
+        const bookingCode = generateBookingCode();
+        const price = parseFloat(flight.price as any);
 
-        // Criar reserva
-        const result = await createBooking({
-          bookingCode,
+        await db.createBooking({
           userId: ctx.user.id,
           flightId: input.flightId,
-          seatId: input.seatId,
-          passengerName: input.passengerName,
-          passengerEmail: input.passengerEmail,
-          totalPrice: flight.pricePerSeat,
-          status: "confirmed",
+          seatNumber: input.seatNumber,
+          bookingCode,
+          totalPrice: price.toString(),
         });
-
-        // Atualizar status do assento
-        await updateSeatStatus(input.seatId, "reserved");
 
         return {
           bookingCode,
-          message: "Booking created successfully",
+          seatNumber: input.seatNumber,
+          price,
         };
       }),
 
-    // Listar reservas do usuário (protegido)
     list: protectedProcedure.query(async ({ ctx }) => {
-      if (!ctx.user) throw new Error("Unauthorized");
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-      const bookings = await getUserBookings(ctx.user.id);
+      const bookings = await db.getBookingsByUser(ctx.user.id);
       
-      // Enriquecer com informações de voo e assento
       const enriched = await Promise.all(
-        bookings.map(async (booking) => {
-          const flight = await getFlightById(booking.flightId);
+        bookings.map(async (b) => {
+          const flight = await db.getFlightById(b.flightId);
           return {
-            ...booking,
-            flight: {
-              flightNumber: flight?.flightNumber,
-              origin: flight?.origin,
-              destination: flight?.destination,
-              departureTime: flight?.departureTime,
-            },
+            id: b.id,
+            bookingCode: b.bookingCode,
+            seatNumber: b.seatNumber,
+            status: b.status,
+            price: parseFloat(b.totalPrice as any),
+            flight: flight ? {
+              flightNumber: flight.flightNumber,
+              origin: flight.origin,
+              destination: flight.destination,
+              departureTime: flight.departureTime,
+            } : null,
           };
         })
       );
@@ -296,155 +206,53 @@ export const appRouter = router({
       return enriched;
     }),
 
-    // Obter detalhes de uma reserva (protegido)
-    getByCode: protectedProcedure
-      .input(z.object({ bookingCode: z.string() }))
-      .query(async ({ input, ctx }) => {
-        if (!ctx.user) throw new Error("Unauthorized");
-
-        const booking = await getBookingByCode(input.bookingCode);
-        if (!booking || booking.userId !== ctx.user.id) {
-          throw new Error("Booking not found");
-        }
-
-        const flight = await getFlightById(booking.flightId);
-        return {
-          ...booking,
-          flight,
-        };
-      }),
-
-    // Cancelar reserva (protegido)
     cancel: protectedProcedure
-      .input(z.object({ bookingId: z.number() }))
-      .mutation(async ({ input, ctx }) => {
-        if (!ctx.user) throw new Error("Unauthorized");
+      .input(z.number())
+      .mutation(async ({ ctx, input }) => {
+        if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-        const booking = await getBookingById(input.bookingId);
-        if (!booking || booking.userId !== ctx.user.id) {
-          throw new Error("Booking not found or unauthorized");
-        }
-
-        // Liberar assento
-        await updateSeatStatus(booking.seatId, "available");
-
-        // Cancelar reserva
-        await cancelBooking(input.bookingId);
-
-        return { success: true, message: "Booking cancelled successfully" };
+        await db.cancelBooking(input);
+        return { success: true };
       }),
   }),
 
-  // ============================================================================
-  // AIRCRAFT PROCEDURES
-  // ============================================================================
-  aircraft: router({
-    // Listar todas as aeronaves (admin)
-    list: protectedProcedure.query(async ({ ctx }) => {
-      if (ctx.user?.role !== "admin") {
-        throw new Error("Unauthorized");
-      }
-      return await getAllAircraft();
-    }),
-
-    // Criar nova aeronave (admin)
-    create: protectedProcedure
-      .input(
-        z.object({
-          name: z.string().min(2),
-          manufacturer: z.string().min(2),
-          totalSeats: z.number().positive(),
-          rows: z.number().positive(),
-          seatsPerRow: z.number().positive(),
-        })
-      )
-      .mutation(async ({ input, ctx }) => {
-        if (ctx.user?.role !== "admin") {
-          throw new Error("Unauthorized");
-        }
-
-        const config = {
-          rows: input.rows,
-          seatsPerRow: input.seatsPerRow,
-          layout: "ABCDEF".slice(0, input.seatsPerRow),
-        };
-
-        const result = await createAircraft({
-          name: input.name,
-          manufacturer: input.manufacturer,
-          totalSeats: input.totalSeats,
-          seatConfiguration: JSON.stringify(config),
-        });
-
-        return { success: true, message: "Aircraft created successfully" };
-      }),
-  }),
-
-  // ============================================================================
-  // ADMIN DASHBOARD PROCEDURES
-  // ============================================================================
+  // Admin
   admin: router({
-    // Obter estatísticas de um voo (admin)
-    getFlightStats: protectedProcedure
-      .input(z.object({ flightId: z.number() }))
-      .query(async ({ input, ctx }) => {
-        if (ctx.user?.role !== "admin") {
-          throw new Error("Unauthorized");
-        }
-
-        const flight = await getFlightById(input.flightId);
-        if (!flight) throw new Error("Flight not found");
-
-        const seats = await getFlightSeats(input.flightId);
-        const bookings = await getFlightBookings(input.flightId);
-        const stats = await getBookingStats(input.flightId);
-
-        const available = seats.filter(s => s.status === "available").length;
-        const occupied = seats.filter(s => s.status === "occupied").length;
-        const reserved = seats.filter(s => s.status === "reserved").length;
-
-        return {
-          flight,
-          seats: {
-            total: seats.length,
-            available,
-            occupied,
-            reserved,
-            occupancyRate: ((occupied + reserved) / seats.length) * 100,
-          },
-          bookings: stats,
-          revenue: stats.confirmed * flight.pricePerSeat,
-        };
-      }),
-
-    // Obter estatísticas globais (admin)
     getDashboardStats: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user?.role !== "admin") {
-        throw new Error("Unauthorized");
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
 
-      const flights = await getAllFlights();
-      const flightStats = await Promise.all(
-        flights.map(async (flight) => {
-          const bookings = await getFlightBookings(flight.id);
-          return {
-            flightId: flight.id,
-            flightNumber: flight.flightNumber,
-            bookingCount: bookings.length,
-            revenue: bookings.length * flight.pricePerSeat,
-          };
-        })
-      );
-
-      const totalRevenue = flightStats.reduce((sum, f) => sum + f.revenue, 0);
-      const totalBookings = flightStats.reduce((sum, f) => sum + f.bookingCount, 0);
+      const allFlights = await db.getFlights();
+      const totalFlights = allFlights.length;
+      const totalBookings = allFlights.reduce((sum, f) => sum + (f.totalSeats - f.availableSeats), 0);
+      const totalRevenue = allFlights.reduce((sum, f) => sum + ((f.totalSeats - f.availableSeats) * parseFloat(f.price as any)), 0);
 
       return {
-        totalFlights: flights.length,
+        totalFlights,
         totalBookings,
         totalRevenue,
-        flightStats,
+        occupancyRate: totalFlights > 0 ? ((totalBookings / (totalFlights * 180)) * 100).toFixed(1) : "0",
       };
+    }),
+
+    getFlights: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user?.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const flights = await db.getFlights();
+      return flights.map(f => ({
+        id: f.id,
+        flightNumber: f.flightNumber,
+        origin: f.origin,
+        destination: f.destination,
+        departureTime: f.departureTime,
+        totalSeats: f.totalSeats,
+        availableSeats: f.availableSeats,
+        price: parseFloat(f.price as any),
+        status: f.status,
+      }));
     }),
   }),
 });

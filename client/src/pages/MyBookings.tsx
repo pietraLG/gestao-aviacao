@@ -1,32 +1,29 @@
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Plane, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { useState } from "react";
+import { toast } from "sonner";
 
 export default function MyBookings() {
   const [, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
-  const [cancelingId, setCancelingId] = useState<number | null>(null);
 
-  const { data: bookings, isLoading, refetch } = trpc.bookings.list.useQuery(
-    undefined,
-    { enabled: isAuthenticated }
-  );
+  const { data: bookings, isLoading, refetch } = trpc.bookings.list.useQuery(undefined, {
+    enabled: isAuthenticated,
+  });
 
   const cancelMutation = trpc.bookings.cancel.useMutation({
     onSuccess: () => {
-      setCancelingId(null);
+      toast.success("Reserva cancelada");
       refetch();
     },
   });
 
   const handleCancel = (bookingId: number) => {
     if (confirm("Tem certeza que deseja cancelar esta reserva?")) {
-      setCancelingId(bookingId);
-      cancelMutation.mutate({ bookingId });
+      cancelMutation.mutate(bookingId);
     }
   };
 
@@ -47,40 +44,70 @@ export default function MyBookings() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+      <div className="max-w-4xl mx-auto">
+        <div className="mb-8">
           <Button
             variant="ghost"
             onClick={() => setLocation("/")}
-            className="text-blue-600 hover:text-blue-700"
+            className="text-blue-600 hover:text-blue-700 mb-4"
           >
             ← Voltar
           </Button>
-          <div className="flex items-center gap-2">
-            <Plane className="w-6 h-6 text-blue-600" />
-            <h1 className="text-xl font-bold text-slate-900">SkyReserve</h1>
-          </div>
+          <h1 className="text-3xl font-bold text-slate-900">Minhas Reservas</h1>
+          <p className="text-slate-600">Gerencie suas reservas de voos</p>
         </div>
-      </header>
 
-      {/* Content */}
-      <section className="max-w-7xl mx-auto px-4 py-8">
-        <h2 className="text-3xl font-bold text-slate-900 mb-8">
-          Minhas Reservas
-        </h2>
-
-        {isLoading && (
-          <div className="flex justify-center items-center py-12">
+        {isLoading ? (
+          <div className="flex justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
           </div>
-        )}
+        ) : bookings && bookings.length > 0 ? (
+          <div className="space-y-4">
+            {bookings.map((booking) => (
+              <Card key={booking.id} className="p-6 hover:shadow-lg transition">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
+                  <div>
+                    <p className="text-xs text-slate-500">Código</p>
+                    <p className="font-bold text-lg text-blue-600">{booking.bookingCode}</p>
+                  </div>
 
-        {!isLoading && bookings && bookings.length === 0 && (
-          <Card className="p-8 text-center bg-white">
-            <Plane className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-            <p className="text-slate-600 mb-4">Você ainda não tem reservas</p>
+                  <div>
+                    <p className="text-xs text-slate-500">Voo</p>
+                    <p className="font-bold">{booking.flight?.flightNumber}</p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500">Rota</p>
+                    <p className="font-bold">
+                      {booking.flight?.origin} → {booking.flight?.destination}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500">Assento</p>
+                    <p className="font-bold">{booking.seatNumber}</p>
+                  </div>
+
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCancel(booking.id)}
+                      disabled={cancelMutation.isPending || booking.status === "cancelled"}
+                      className="gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ) : (
+          <Card className="p-12 text-center">
+            <p className="text-slate-600 text-lg mb-4">Nenhuma reserva encontrada</p>
             <Button
               onClick={() => setLocation("/")}
               className="bg-blue-600 hover:bg-blue-700"
@@ -89,101 +116,7 @@ export default function MyBookings() {
             </Button>
           </Card>
         )}
-
-        {!isLoading && bookings && bookings.length > 0 && (
-          <div className="space-y-4">
-            {bookings.map((booking) => (
-              <Card key={booking.id} className="p-6 bg-white hover:shadow-lg transition-shadow">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-start">
-                  {/* Booking Code */}
-                  <div>
-                    <p className="text-xs text-slate-500 mb-1">Código de Reserva</p>
-                    <p className="text-lg font-bold text-blue-600 font-mono">
-                      {booking.bookingCode}
-                    </p>
-                  </div>
-
-                  {/* Flight Info */}
-                  <div>
-                    <p className="text-xs text-slate-500 mb-1">Voo</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {booking.flight?.flightNumber}
-                    </p>
-                    <p className="text-sm text-slate-600">
-                      {booking.flight?.origin} → {booking.flight?.destination}
-                    </p>
-                  </div>
-
-                  {/* Passenger */}
-                  <div>
-                    <p className="text-xs text-slate-500 mb-1">Passageiro</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {booking.passengerName}
-                    </p>
-                  </div>
-
-                  {/* Status and Price */}
-                  <div>
-                    <p className="text-xs text-slate-500 mb-1">Status</p>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          booking.status === "confirmed"
-                            ? "bg-green-100 text-green-800"
-                            : booking.status === "cancelled"
-                            ? "bg-red-100 text-red-800"
-                            : "bg-slate-100 text-slate-800"
-                        }`}
-                      >
-                        {booking.status === "confirmed"
-                          ? "Confirmada"
-                          : booking.status === "cancelled"
-                          ? "Cancelada"
-                          : "Completa"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setLocation(`/booking/${booking.bookingCode}`)}
-                    >
-                      Detalhes
-                    </Button>
-                    {booking.status === "confirmed" && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleCancel(booking.id)}
-                        disabled={cancelingId === booking.id}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                      >
-                        {cancelingId === booking.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
-
-        {cancelMutation.error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-700">
-              Erro ao cancelar reserva. Tente novamente.
-            </p>
-          </div>
-        )}
-      </section>
+      </div>
     </div>
   );
 }

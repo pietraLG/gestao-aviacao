@@ -1,11 +1,10 @@
-import { eq, and, gte, lte, desc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, aircraft, flights, seats, bookings, Flight, Seat, Booking, Aircraft } from "../drizzle/schema";
+import { InsertUser, users, flights, bookings, Flight, Booking } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -85,248 +84,118 @@ export async function getUserByOpenId(openId: string) {
   }
 
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
   return result.length > 0 ? result[0] : undefined;
 }
 
-// ============================================================================
-// AIRCRAFT QUERIES
-// ============================================================================
-
-export async function createAircraft(data: {
-  name: string;
-  manufacturer: string;
-  totalSeats: number;
-  seatConfiguration: string;
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  const result = await db.insert(aircraft).values(data);
-  return result;
-}
-
-export async function getAircraftById(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-
-  const result = await db.select().from(aircraft).where(eq(aircraft.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-export async function getAllAircraft() {
-  const db = await getDb();
-  if (!db) return [];
-
-  return await db.select().from(aircraft);
-}
-
-// ============================================================================
-// FLIGHTS QUERIES
-// ============================================================================
-
+// Flight queries
 export async function createFlight(data: {
   flightNumber: string;
-  aircraftId: number;
   origin: string;
   destination: string;
   departureTime: Date;
   arrivalTime: Date;
-  pricePerSeat: number;
-  status?: "scheduled" | "boarding" | "departed" | "cancelled";
+  aircraftType: string;
+  totalSeats: number;
+  price: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const result = await db.insert(flights).values(data);
+  const result = await db.insert(flights).values({
+    ...data,
+    availableSeats: data.totalSeats,
+    status: "scheduled",
+  });
+
+  return result;
+}
+
+export async function getFlights(filters?: {
+  origin?: string;
+  destination?: string;
+  departureDate?: Date;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  let conditions = [];
+  if (filters?.origin) {
+    conditions.push(eq(flights.origin, filters.origin));
+  }
+  if (filters?.destination) {
+    conditions.push(eq(flights.destination, filters.destination));
+  }
+
+  const result = conditions.length > 0
+    ? await db.select().from(flights).where(and(...conditions))
+    : await db.select().from(flights);
   return result;
 }
 
 export async function getFlightById(id: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return null;
 
   const result = await db.select().from(flights).where(eq(flights.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  return result.length > 0 ? result[0] : null;
 }
 
-export async function getFlightByNumber(flightNumber: string) {
-  const db = await getDb();
-  if (!db) return undefined;
-
-  const result = await db.select().from(flights).where(eq(flights.flightNumber, flightNumber)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-export async function searchFlights(origin: string, destination: string, departureDate: Date) {
-  const db = await getDb();
-  if (!db) return [];
-
-  // Busca voos no mesmo dia
-  const startOfDay = new Date(departureDate);
-  startOfDay.setHours(0, 0, 0, 0);
-  
-  const endOfDay = new Date(departureDate);
-  endOfDay.setHours(23, 59, 59, 999);
-
-  return await db
-    .select()
-    .from(flights)
-    .where(
-      and(
-        eq(flights.origin, origin),
-        eq(flights.destination, destination),
-        gte(flights.departureTime, startOfDay),
-        lte(flights.departureTime, endOfDay),
-        eq(flights.status, "scheduled")
-      )
-    )
-    .orderBy(flights.departureTime);
-}
-
-export async function getAllFlights() {
-  const db = await getDb();
-  if (!db) return [];
-
-  return await db.select().from(flights).orderBy(desc(flights.departureTime));
-}
-
-export async function updateFlightStatus(flightId: number, status: "scheduled" | "boarding" | "departed" | "cancelled") {
+export async function updateFlight(id: number, data: Partial<Flight>) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  return await db.update(flights).set({ status }).where(eq(flights.id, flightId));
+  await db.update(flights).set(data).where(eq(flights.id, id));
 }
 
-// ============================================================================
-// SEATS QUERIES
-// ============================================================================
-
-export async function createSeats(seatData: Array<{
-  flightId: number;
-  seatNumber: string;
-  row: number;
-  column: string;
-  status?: "available" | "occupied" | "reserved";
-  seatClass?: "economy" | "business" | "first";
-}>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  return await db.insert(seats).values(seatData);
-}
-
-export async function getFlightSeats(flightId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return await db.select().from(seats).where(eq(seats.flightId, flightId));
-}
-
-export async function getSeatById(seatId: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-
-  const result = await db.select().from(seats).where(eq(seats.id, seatId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-export async function updateSeatStatus(seatId: number, status: "available" | "occupied" | "reserved") {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-
-  return await db.update(seats).set({ status }).where(eq(seats.id, seatId));
-}
-
-export async function getAvailableSeatsCount(flightId: number) {
-  const db = await getDb();
-  if (!db) return 0;
-
-  const result = await db
-    .select()
-    .from(seats)
-    .where(and(eq(seats.flightId, flightId), eq(seats.status, "available")));
-
-  return result.length;
-}
-
-// ============================================================================
-// BOOKINGS QUERIES
-// ============================================================================
-
+// Booking queries
 export async function createBooking(data: {
-  bookingCode: string;
   userId: number;
   flightId: number;
-  seatId: number;
-  passengerName: string;
-  passengerEmail: string;
-  totalPrice: number;
-  status?: "confirmed" | "cancelled" | "completed";
+  seatNumber: string;
+  bookingCode: string;
+  totalPrice: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  const result = await db.insert(bookings).values(data);
+  const result = await db.insert(bookings).values({
+    ...data,
+    status: "confirmed",
+  });
+
   return result;
 }
 
-export async function getBookingById(id: number) {
+export async function getBookingsByUser(userId: number) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return [];
 
-  const result = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
+  const result = await db.select().from(bookings).where(eq(bookings.userId, userId));
+  return result;
 }
 
 export async function getBookingByCode(bookingCode: string) {
   const db = await getDb();
-  if (!db) return undefined;
+  if (!db) return null;
 
   const result = await db.select().from(bookings).where(eq(bookings.bookingCode, bookingCode)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-export async function getUserBookings(userId: number) {
-  const db = await getDb();
-  if (!db) return [];
-
-  return await db
-    .select()
-    .from(bookings)
-    .where(eq(bookings.userId, userId))
-    .orderBy(desc(bookings.bookingDate));
+  return result.length > 0 ? result[0] : null;
 }
 
 export async function cancelBooking(bookingId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
-  return await db
-    .update(bookings)
-    .set({ status: "cancelled", cancellationDate: new Date() })
-    .where(eq(bookings.id, bookingId));
+  await db.update(bookings).set({ status: "cancelled" }).where(eq(bookings.id, bookingId));
 }
 
-export async function getFlightBookings(flightId: number) {
+export async function getBookedSeats(flightId: number) {
   const db = await getDb();
   if (!db) return [];
 
-  return await db
-    .select()
+  const result = await db.select({ seatNumber: bookings.seatNumber })
     .from(bookings)
     .where(and(eq(bookings.flightId, flightId), eq(bookings.status, "confirmed")));
-}
 
-export async function getBookingStats(flightId: number) {
-  const db = await getDb();
-  if (!db) return { total: 0, confirmed: 0, cancelled: 0 };
-
-  const result = await db.select().from(bookings).where(eq(bookings.flightId, flightId));
-
-  return {
-    total: result.length,
-    confirmed: result.filter(b => b.status === "confirmed").length,
-    cancelled: result.filter(b => b.status === "cancelled").length,
-  };
+  return result.map(r => r.seatNumber);
 }
