@@ -1,4 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
+import { and, eq } from "drizzle-orm";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -49,8 +50,8 @@ export const appRouter = router({
           flightNumber: f.flightNumber,
           origin: f.origin,
           destination: f.destination,
-          departureTime: f.departureTime,
-          arrivalTime: f.arrivalTime,
+          departureTime: f.departureTime instanceof Date ? f.departureTime : new Date(f.departureTime),
+          arrivalTime: f.arrivalTime instanceof Date ? f.arrivalTime : new Date(f.arrivalTime),
           aircraftType: f.aircraftType,
           totalSeats: f.totalSeats,
           availableSeats: f.availableSeats,
@@ -69,8 +70,8 @@ export const appRouter = router({
           flightNumber: flight.flightNumber,
           origin: flight.origin,
           destination: flight.destination,
-          departureTime: flight.departureTime,
-          arrivalTime: flight.arrivalTime,
+          departureTime: flight.departureTime instanceof Date ? flight.departureTime : new Date(flight.departureTime),
+          arrivalTime: flight.arrivalTime instanceof Date ? flight.arrivalTime : new Date(flight.arrivalTime),
           aircraftType: flight.aircraftType,
           totalSeats: flight.totalSeats,
           availableSeats: flight.availableSeats,
@@ -86,8 +87,8 @@ export const appRouter = router({
         flightNumber: f.flightNumber,
         origin: f.origin,
         destination: f.destination,
-        departureTime: f.departureTime,
-        arrivalTime: f.arrivalTime,
+        departureTime: f.departureTime instanceof Date ? f.departureTime : new Date(f.departureTime),
+        arrivalTime: f.arrivalTime instanceof Date ? f.arrivalTime : new Date(f.arrivalTime),
         aircraftType: f.aircraftType,
         totalSeats: f.totalSeats,
         availableSeats: f.availableSeats,
